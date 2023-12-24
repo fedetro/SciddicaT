@@ -15,9 +15,9 @@
 // ----------------------------------------------------------------------------
 // Simulation parameters
 // ----------------------------------------------------------------------------
-#define SIZE_OF_X 5
-#define P_R 0.5
-#define P_EPSILON 0.001
+#define SIZE_OF_X 5 // dimensione della griglia
+#define P_R 0.5     // la probabilità di deflusso
+#define P_EPSILON 0.001 // parametro di attrito 
 // ----------------------------------------------------------------------------
 // Read/Write access macros linearizing single/multy layer buffer 2D indices
 // ----------------------------------------------------------------------------
@@ -30,6 +30,8 @@
 // I/O functions
 // ----------------------------------------------------------------------------
 #define STRLEN 256
+
+// legge le informazioni di intestazione da un file
 void readHeaderInfo(char* path, int &nrows, int &ncols, /*double &xllcorner, double &yllcorner, double &cellsize,*/ double &nodata)
 {
   FILE* f;
@@ -49,6 +51,7 @@ void readHeaderInfo(char* path, int &nrows, int &ncols, /*double &xllcorner, dou
   fscanf(f,"%s",&str); fscanf(f,"%s",&str); nodata = atof(str);
 }
 
+// carica una griglia da un file
 bool loadGrid2D(double *M, int rows, int columns, char *path)
 {
   FILE *f = fopen(path, "r");
@@ -71,6 +74,7 @@ bool loadGrid2D(double *M, int rows, int columns, char *path)
   return true;
 }
 
+// salva una griglia su un file
 bool saveGrid2Dr(double *M, int rows, int columns, char *path)
 {
   FILE *f;
@@ -106,6 +110,7 @@ double* addLayer2D(int rows, int columns)
 // ----------------------------------------------------------------------------
 // init kernel, called once before the simulation loop
 // ----------------------------------------------------------------------------
+// calcola gli indici i e j, verifica che siano all'interno dei limiti della griglia, e poi esegue le operazioni di inizializzazione della simulazione per la cella corrente.
 void sciddicaTSimulationInit(int i, int j, int r, int c, double* Sz, double* Sh, double* Sf)
 {
   double z, h;
@@ -122,7 +127,7 @@ void sciddicaTSimulationInit(int i, int j, int r, int c, double* Sz, double* Sh,
 }
 
 // ----------------------------------------------------------------------------
-// computing kernels, aka elementary processes in the XCA terminology
+// computing kernels, aka elementary processes in the XCA terminology. calcola i flussi tra le celle adiacenti in base allo stato corrente del modello
 // ----------------------------------------------------------------------------
 void sciddicaTFlowsComputation(int i, int j, int r, int c, double nodata, int* Xi, int* Xj, double *Sz, double *Sh, double *Sf, double p_r, double p_epsilon)
 {
@@ -165,6 +170,7 @@ void sciddicaTFlowsComputation(int i, int j, int r, int c, double nodata, int* X
     !eliminated_cells[n] ? BUF_SET(Sf, r, c, n-1, i, j, (average - u[n]) * p_r) : BUF_SET(Sf, r, c, n-1, i, j, 0);
 }
 
+// aggiorna lo spessore del flusso in ciascuna cella in base ai flussi calcolati nella fase precedente.
 void sciddicaTWidthUpdate(int i, int j, int r, int c, double nodata, int* Xi, int* Xj, double *Sz, double *Sh, double *Sf)
 {
   double h_next;
@@ -189,13 +195,13 @@ int main(int argc, char **argv)
   int c = cols;                          // c: grid columns
   int i_start = 1, i_end = r-1;          // [i_start,i_end[: kernels application range along the rows
   int j_start = 1, j_end = c-1;          // [i_start,i_end[: kernels application range along the rows
-  double *Sz;                            // Sz: substate (grid) containing the cells' altitude a.s.l.
-  double *Sh;                            // Sh: substate (grid) containing the cells' flow thickness
-  double *Sf;                            // Sf: 4 substates containing the flows towards the 4 neighs
+  double *Sz;                            // Sz: substate (grid) containing the cells' altitude a.s.l. sopra il livello del mare
+  double *Sh;                            // Sh: substate (grid) containing the cells' flow thickness (spessore del flusso delle celle)
+  double *Sf;                            // Sf: 4 substates containing the flows towards the 4 neighs (contenente i flussi verso i 4 vicini)
   int Xi[] = {0, -1,  0,  0,  1};        // Xj: neighborhood row coordinates (see below)
   int Xj[] = {0,  0, -1,  1,  0};        // Xj: neighborhood col coordinates (see below)
-  double p_r = P_R;                      // p_r: minimization algorithm outflows dumping factor
-  double p_epsilon = P_EPSILON;          // p_epsilon: frictional parameter threshold
+  double p_r = P_R;                      // p_r: minimization algorithm outflows dumping factor. Fattore di smorzamento degli effluenti
+  double p_epsilon = P_EPSILON;          // p_epsilon: frictional parameter threshold. Soglia del parametro di attrito
   int steps = atoi(argv[STEPS_ID]);      //steps: simulation steps
 
   // The adopted von Neuman neighborhood
@@ -211,9 +217,9 @@ int main(int argc, char **argv)
   //
   //
 
-  Sz = addLayer2D(r, c);               // Allocates the Sz substate grid
-  Sh = addLayer2D(r, c);               // Allocates the Sh substate grid
-  Sf = addLayer2D((SIZE_OF_X-1)*r, c); // Allocates the Sf substates grid, having one layer for each adjacent cell
+  Sz = addLayer2D(r, c);               // Allocates the Sz substate grid. altitudine
+  Sh = addLayer2D(r, c);               // Allocates the Sh substate grid. spessore del flusso
+  Sf = addLayer2D((SIZE_OF_X-1)*r, c); // Allocates the Sf substates grid, having one layer for each adjacent cell. flussi
 
   loadGrid2D(Sz, r, c, argv[DEM_PATH_ID]);   // Load Sz from file
   loadGrid2D(Sh, r, c, argv[SOURCE_PATH_ID]);// Load Sh from file
@@ -228,13 +234,13 @@ int main(int argc, char **argv)
   // simulation loop
   for (int s = 0; s < steps; ++s)
   {
-  // Apply the FlowComputation kernel to the whole domain
+  // Apply the FlowComputation kernel to the whole domain. Calcola i flussi tra le celle adiacenti
 #pragma omp parallel for
     for (int i = i_start; i < i_end; i++)
       for (int j = j_start; j < j_end; j++)
         sciddicaTFlowsComputation(i, j, r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
 
-  // Apply the WidthUpdate mass balance kernel to the whole domain
+  // Apply the WidthUpdate mass balance kernel to the whole domain. Aggiorna lo spessore del flusso in ciascuna cella
 #pragma omp parallel for
     for (int i = i_start; i < i_end; i++)
       for (int j = j_start; j < j_end; j++)
@@ -243,6 +249,7 @@ int main(int argc, char **argv)
   double cl_time = static_cast<double>(cl_timer.getTimeMilliseconds()) / 1000.0;
   printf("Elapsed time: %lf [s]\n", cl_time);
 
+  // Salva i risultati (lo stato finale dello spessore del fluido) su file
   saveGrid2Dr(Sh, r, c, argv[OUTPUT_PATH_ID]);// Save Sh to file
 
   printf("Releasing memory...\n");
